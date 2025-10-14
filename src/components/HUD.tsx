@@ -1,6 +1,7 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { Gauge, Cloud } from "lucide-react";
+import { relBearing } from "@/utils";
 
 export type ChargerMode = "OFF" | "REGEN" | "DOCK";
 
@@ -27,6 +28,7 @@ export default function HUD({
   alt,
   heading,
   target,
+  targets = [],
   sensorsOnline,
   onRequestPower,
 }: {
@@ -45,11 +47,10 @@ export default function HUD({
   alt: number;
   heading: number;
   target: TargetTrack | null;
+  targets?: TargetTrack[];
   sensorsOnline: boolean;
   onRequestPower: () => void;
 }) {
-  const relBearing = (bearing: number, yaw: number) => ((bearing - yaw + 540) % 360) - 180;
-
   return (
     <div
       className={`relative aspect-video rounded-2xl overflow-hidden border border-zinc-800 bg-gradient-to-b from-zinc-900 to-black ${transAm ? "[box-shadow:0_0_30px_theme(colors.red.600/.45),inset_0_0_60px_theme(colors.red.600/.12)]" : "[box-shadow:0_0_30px_theme(colors.cyan.500/.45),inset_0_0_60px_theme(colors.cyan.500/.10)]"}`}
@@ -140,6 +141,13 @@ export default function HUD({
               <div className={`h-full ${transAm ? "bg-red-400" : "bg-cyan-400"}`} style={{ width: `${charge}%` }} />
             </div>
           </div>
+
+          {sensorsOnline &&
+            targets.map((t, i) => (
+              <div key={i} className="absolute" style={{ left: `calc(${t.x}% - 6px)`, top: `calc(${t.y}% - 6px)` }}>
+                <div className="w-3 h-3 border border-emerald-300" />
+              </div>
+            ))}
 
           {/* HUD Target Lock (from Radar) */}
           {target && sensorsOnline && (

@@ -1,11 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
-import React, { useEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   BatteryFull,
   Gauge,
-  Cloud,
   Zap,
   FlameKindling,
   PlugZap,
@@ -35,8 +33,8 @@ import SolarMonitor from "@/components/monitors/SolarMonitor";
 import Radar from "@/components/Radar";
 
 import { CFG } from "@/config";
-import { clamp, rnd, relBearing, uid } from "@/utils";
-import { canEnableTransAmManual, canPowerOnSystem } from "@/logic";
+import { clamp, rnd, uid } from "@/utils";
+import { canEnableTransAmManual } from "@/logic";
 import { FrameHealth, SubsHealth, SubPower, TargetTrack, LogEntry, ChargerMode } from "@/types";
 import { runRuntimeAsserts } from "@/runtime-tests";
 import HUD from "@/components/HUD";
@@ -75,7 +73,10 @@ export default function Home() {
   // comms
   const [log, setLog] = useState<LogEntry[]>([{ id: uid(), ch: "Celestial Being", text: "Systems standby." }]);
   const logRef = useRef<HTMLDivElement | null>(null);
-  const pushLog = (ch: string, text: string) => setLog((L) => [...L, { id: uid(), ch, text }].slice(-28));
+  const pushLog = useCallback((ch: string, text: string) => {
+    setLog((L) => [...L, { id: uid(), ch, text }].slice(-28));
+  }, []);
+  const prevLockCountRef = useRef<number>(0);
   const [callOn, setCallOn] = useState(false);
   const [mode, setMode] = useState<"VOICE" | "VIDEO">("VOICE");
   const [muted, setMuted] = useState(false);
@@ -83,6 +84,7 @@ export default function Home() {
 
   // target from radar
   const [target, setTarget] = useState<TargetTrack | null>(null);
+  const [targets, setTargets] = useState<TargetTrack[]>([]);
   const lastPing = useRef(0),
     lastBattWarn = useRef(0);
 
@@ -271,6 +273,24 @@ export default function Home() {
     setTimeout(() => setBurst(false), CFG.BURST_MS);
   };
 
+  const handleMultiLock = useCallback(
+    (list: (TargetTrack & { id: string })[]) => {
+      // อัปเดตลิสต์เป้าทั้งหมดให้ HUD
+      setTargets(list.map(({ id, ...rest }) => rest));
+
+      // ตั้ง primary เฉพาะกรณีที่ยังไม่มี (จะไม่สวิงไปมา)
+      if (!target && list[0]) setTarget(list[0]);
+
+      // log เฉพาะตอนจำนวนเป้าเปลี่ยน (ของเดิมคงไว้)
+      const n = list.length;
+      if (n !== prevLockCountRef.current) {
+        prevLockCountRef.current = n;
+        pushLog("Sensor", `Multi-lock: ${n} target(s)`);
+      }
+    },
+    [pushLog, target]
+  );
+
   return (
     <div className="min-h-screen bg-zinc-950 text-white p-4 md:p-6">
       {welcome && (
@@ -458,6 +478,7 @@ export default function Home() {
             alt={alt}
             heading={yaw}
             target={target as TargetTrack | null}
+            targets={targets}
             sensorsOnline={sub.sensors}
             onRequestPower={() => setPowerOn(true)}
           />
@@ -471,6 +492,7 @@ export default function Home() {
                 setTarget(d);
                 pushLog("Sensor", `Target track set: (${d.x.toFixed(1)}, ${d.y.toFixed(1)}) ${Math.round(d.distance)} m @ ${Math.round(d.bearing)}°`);
               }}
+              onMultiLock={handleMultiLock}
             />
           </Panel>
           <Panel title="COMMS Log" icon={<Radio size={16} />}>
