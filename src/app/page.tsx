@@ -38,6 +38,7 @@ import { canEnableTransAmManual } from "@/logic";
 import { FrameHealth, SubsHealth, SubPower, TargetTrack, LogEntry, ChargerMode } from "@/types";
 import { runRuntimeAsserts } from "@/runtime-tests";
 import HUD from "@/components/HUD";
+import ThrustersMonitor from "@/components/monitors/ThrustersMonitor";
 
 export default function Home() {
   // power & modes
@@ -66,6 +67,9 @@ export default function Home() {
   const [sub, setSub] = useState<SubPower>({ sensors: false, thrusters: false, weapons: false, comms: false, nav: false, solar: false });
   const [solarStats, setSolarStats] = useState({ saved: 0, load: 0 });
 
+  //thrusters
+  const [throttle, setThrottle] = useState(0);
+
   // health
   const [frame, setFrame] = useState<FrameHealth>({ head: 100, torso: 100, lArm: 100, rArm: 100, lLeg: 100, rLeg: 100 });
   const [subs, setSubs] = useState<SubsHealth>({ sensors: 100, thrusters: 100, weaponMount: 100 });
@@ -88,12 +92,19 @@ export default function Home() {
   const lastPing = useRef(0),
     lastBattWarn = useRef(0);
 
+  // --- Derived values for thrusters ---
+  const thrOK = sub.thrusters;
+  const thrEff = (thrOK ? subs.thrusters : 0) / 100;
+  // เพดานความเร็วตามสภาพ thrusters
+  const vMax = thrOK ? 640 * thrEff + 60 : 0;
+
   // housekeeping
   useEffect(() => {
     runRuntimeAsserts();
   }, []);
   useEffect(() => {
     if (!powerOn) setSub({ sensors: false, thrusters: false, weapons: false, comms: false, nav: false, solar: false });
+    setThrottle(0);
   }, [powerOn]);
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -141,7 +152,12 @@ export default function Home() {
       const thrEff = (thrOK ? subs.thrusters : 0) / 100;
       const sensEff = Math.max(0.35, (sensOK ? subs.sensors : 0) / 100);
       const boost = (transAm ? 1.6 : 1) * (burst ? 2.2 : 1) * (0.85 + 0.15 * thrEff);
-      setSpeed((s) => (thrOK ? clamp(s + (40 - s) * 0.03 * boost, 0, 640 * thrEff + 60) : Math.max(0, s - 4)));
+      const targetV = vMax * (throttle / 100);
+      setSpeed((s) =>
+        thrOK
+          ? clamp(s + (targetV - s) * 0.04 * boost, 0, vMax) // เดินหน้าเข้าหา speed เป้าหมาย
+          : Math.max(0, s - 4)
+      );
       setAlt((a) => (navOK ? clamp(a + rnd(-1, 2) + speed * 0.02, 0, 5000) : Math.max(0, a - 1)));
       setLock((l) =>
         sensOK ? clamp(Math.min(100 * sensEff, l + (Math.random() > 0.7 ? rnd(1, 3) * boost * sensEff : -rnd(0, 1))), 0, 100) : Math.max(0, l - 2)
@@ -273,22 +289,31 @@ export default function Home() {
     setTimeout(() => setBurst(false), CFG.BURST_MS);
   };
 
+  // อัปเดตหลายเป้า (ส่งมาจาก Radar)
   const handleMultiLock = useCallback(
     (list: (TargetTrack & { id: string })[]) => {
-      // อัปเดตลิสต์เป้าทั้งหมดให้ HUD
-      setTargets(list.map(({ id, ...rest }) => rest));
+      // map ลิสต์ให้ HUD (ตัด id ออก)
+      const mapped = list.map(({ id, ...rest }) => rest);
 
-      // ตั้ง primary เฉพาะกรณีที่ยังไม่มี (จะไม่สวิงไปมา)
-      if (!target && list[0]) setTarget(list[0]);
+      // กัน setState ซ้ำถ้าไม่มีอะไรเปลี่ยน
+      setTargets((prev) => {
+        if (
+          prev.length === mapped.length &&
+          prev.every((p, i) => p.x === mapped[i].x && p.y === mapped[i].y && p.distance === mapped[i].distance && p.bearing === mapped[i].bearing)
+        ) {
+          return prev;
+        }
+        return mapped;
+      });
 
-      // log เฉพาะตอนจำนวนเป้าเปลี่ยน (ของเดิมคงไว้)
+      // log เฉพาะตอนจำนวนเป้าเปลี่ยน
       const n = list.length;
       if (n !== prevLockCountRef.current) {
         prevLockCountRef.current = n;
         pushLog("Sensor", `Multi-lock: ${n} target(s)`);
       }
     },
-    [pushLog, target]
+    [pushLog] // ❗️อย่าผูกกับ targets — จะทำให้ onMultiLock เปลี่ยนทุก render
   );
 
   return (
@@ -477,23 +502,13 @@ export default function Home() {
             speed={speed}
             alt={alt}
             heading={yaw}
-            target={target as TargetTrack | null}
-            targets={targets}
+            targets={targets as TargetTrack[]}
             sensorsOnline={sub.sensors}
             onRequestPower={() => setPowerOn(true)}
           />
 
           <Panel title="Radar" icon={<RadarIcon size={16} />}>
-            <Radar
-              power={powerOn}
-              sensors={sub.sensors}
-              lock={lock}
-              onTrack={(d) => {
-                setTarget(d);
-                pushLog("Sensor", `Target track set: (${d.x.toFixed(1)}, ${d.y.toFixed(1)}) ${Math.round(d.distance)} m @ ${Math.round(d.bearing)}°`);
-              }}
-              onMultiLock={handleMultiLock}
-            />
+            <Radar power={powerOn} sensors={sub.sensors} lock={lock} onMultiLock={handleMultiLock} />
           </Panel>
           <Panel title="COMMS Log" icon={<Radio size={16} />}>
             <div ref={logRef} className="max-h-64 overflow-auto rounded-md bg-zinc-950/60 border border-zinc-800 p-2 text-xs">
@@ -601,6 +616,9 @@ export default function Home() {
           </Panel>
           <Panel title="COMMS Monitor" icon={<Radio size={16} />}>
             <CommsMonitor enabled={sub.comms && powerOn} mode={mode} live={callOn} muted={muted} level={sig} />
+          </Panel>
+          <Panel title="Thrusters Monitor" icon={<Zap size={16} />}>
+            <ThrustersMonitor enabled={powerOn && sub.thrusters} throttle={throttle} onThrottle={setThrottle} speed={speed} maxSpeed={vMax} />
           </Panel>
         </div>
       </div>

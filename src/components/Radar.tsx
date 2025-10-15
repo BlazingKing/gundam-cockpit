@@ -8,20 +8,19 @@ export default function Radar({
   power,
   sensors,
   lock,
-  onTrack,
   onMultiLock, // รายงานรายการเป้าหมายที่ล็อกหลายตัวออกไป (optional)
   maxLocks = 8, // จำกัดจำนวน multi-lock
+  autoLockCount = 4,
 }: {
   power: boolean;
   sensors: boolean;
   lock: number;
-  onTrack: (d: TargetTrack) => void;
   onMultiLock?: (list: (TargetTrack & { id: string })[]) => void;
   maxLocks?: number;
+  autoLockCount?: number;
 }) {
   const [blips, setBlips] = useState<{ id: string; x: number; y: number; life: number }[]>([]);
   const [hover, setHover] = useState<{ id: string; x: number; y: number; dist: number; brg: number } | null>(null);
-  const [primary, setPrimary] = useState<string | null>(null); // เป้าหมายหลัก (ไปโชว์ใน HUD)
   const [locked, setLocked] = useState<string[]>([]); // รายการ multi-lock
 
   const toMeters = (x: number, y: number) => {
@@ -75,6 +74,15 @@ export default function Radar({
 
   const toggleLock = (id: string) => setLocked((s) => (s.includes(id) ? s.filter((x) => x !== id) : s.length < maxLocks ? [...s, id] : s));
 
+  const doAutoMultiLock = () => {
+    if (nearest.length === 0) return;
+    setLocked((s) => {
+      const avail = nearest.map((n) => n.id).filter((id) => !s.includes(id));
+      const take = avail.slice(0, Math.max(0, Math.min(autoLockCount, maxLocks - s.length)));
+      return take.length ? [...s, ...take] : s;
+    });
+  };
+
   return (
     <div>
       {/* หน้าปัดเรดาร์สี่เหลี่ยมจัตุรัส */}
@@ -117,21 +125,22 @@ export default function Radar({
         {blips.map((b) => {
           const dist = toMeters(b.x, b.y);
           const brg = bearing(b.x, b.y);
-          const isPrimary = primary === b.id;
           const isLocked = locked.includes(b.id);
-          const mark = isPrimary ? "ring-2 ring-emerald-400" : isLocked ? "ring-2 ring-emerald-300" : "";
           return (
             <div
               key={b.id}
-              className={`absolute w-1.5 h-1.5 rounded-full bg-emerald-400 ${mark}`}
-              style={{ left: `calc(${b.x}% - 3px)`, top: `calc(${b.y}% - 3px)`, opacity: b.life / 100 }}
+              className="absolute"
+              style={{ left: `calc(${b.x}% - 6px)`, top: `calc(${b.y}% - 6px)`, opacity: b.life / 100 }}
               onMouseEnter={() => setHover({ id: b.id, x: b.x, y: b.y, dist, brg })}
               onMouseLeave={() => setHover((h) => (h && h.id === b.id ? null : h))}
-              onDoubleClick={() => {
-                setPrimary(b.id);
-                onTrack({ x: b.x, y: b.y, distance: dist, bearing: brg });
-              }}
-            />
+            >
+              {/* ping วงเล็กทุกเป้า (ศัตรูพบ) */}
+              <div className="w-3 h-3 rounded-full border border-emerald-300 animate-ping pointer-events-none" />
+              {/* จุดแกนกลาง */}
+              <div
+                className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full ${isLocked ? "bg-emerald-400" : "bg-emerald-300"}`}
+              />
+            </div>
           );
         })}
 
@@ -145,25 +154,13 @@ export default function Radar({
           </div>
         )}
 
-        {/* primary reticle */}
-        {primary &&
-          (() => {
-            const t = blips.find((b) => b.id === primary);
-            if (!t) return null;
-            return (
-              <div className="absolute pointer-events-none" style={{ left: `calc(${t.x}% - 8px)`, top: `calc(${t.y}% - 8px)` }}>
-                <div className="w-4 h-4 rounded-full border-2 border-emerald-400 animate-ping" />
-              </div>
-            );
-          })()}
-
-        {/* multi-lock markers (วงเล็ก) */}
+        {/* กรอบเล็กแสดงว่า “ถูกล็อกแล้ว” ทับบนเป้า */}
         {locked.map((id) => {
           const t = blips.find((b) => b.id === id);
           if (!t) return null;
           return (
-            <div key={id} className="absolute pointer-events-none" style={{ left: `calc(${t.x}% - 6px)`, top: `calc(${t.y}% - 6px)` }}>
-              <div className="w-3 h-3 rounded-full border border-emerald-300" />
+            <div key={id} className="absolute pointer-events-none" style={{ left: `calc(${t.x}% - 7px)`, top: `calc(${t.y}% - 7px)` }}>
+              <div className="w-3.5 h-3.5 rounded border border-emerald-400" />
             </div>
           );
         })}
@@ -173,22 +170,35 @@ export default function Radar({
 
       {/* ปุ่ม Multi-lock (ลิสต์เป้าใกล้สุด) */}
       <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]">
-        {nearest.map((n) => (
-          <button
-            key={n.id}
-            onClick={() => toggleLock(n.id)}
-            className={`px-2 py-1 rounded border ${locked.includes(n.id) ? "border-emerald-400 text-emerald-300" : "border-zinc-700 text-zinc-300"}`}
-            title={`Lock/Unlock ${Math.round(n.dist)}m @ ${Math.round(n.brg)}°`}
-          >
-            {locked.includes(n.id) ? "Unlock" : "Lock"} · {Math.round(n.dist)}m @ {Math.round(n.brg)}°
-          </button>
-        ))}
-        {nearest.length === 0 && <div className="text-zinc-400">No contacts</div>}
-        {locked.length > 0 && (
-          <button onClick={() => setLocked([])} className="px-2 py-1 rounded border border-zinc-700">
-            Clear locks ({locked.length})
-          </button>
-        )}
+        <button
+          onClick={doAutoMultiLock}
+          className="px-2 py-1 rounded border border-zinc-700"
+          title={`Lock nearest ${autoLockCount} targets`}
+          disabled={!power || !sensors || nearest.length === 0 || locked.length >= maxLocks}
+        >
+          Multi-Lock
+        </button>
+        <button
+          onClick={() => setLocked([])}
+          className={`px-2 py-1 rounded border ${locked.length ? "border-zinc-700" : "border-zinc-800 text-zinc-600 cursor-not-allowed"}`}
+          disabled={locked.length === 0}
+          title="Clear all locks"
+        >
+          Clear
+        </button>
+        {/* รายการ quick lock/unlock ตามเป้าใกล้สุด (เดิม) */}
+        <div className="ml-auto grid grid-cols-2 gap-2">
+          {nearest.map((n) => (
+            <button
+              key={n.id}
+              onClick={() => toggleLock(n.id)}
+              className={`px-2 py-1 rounded border ${locked.includes(n.id) ? "border-emerald-400 text-emerald-300" : "border-zinc-700 text-zinc-300"}`}
+              title={`Lock/Unlock ${Math.round(n.dist)}m @ ${Math.round(n.brg)}°`}
+            >
+              {locked.includes(n.id) ? "Unlock" : "Lock"} · {Math.round(n.dist)}m @ {Math.round(n.brg)}°
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

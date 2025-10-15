@@ -27,7 +27,6 @@ export default function HUD({
   speed,
   alt,
   heading,
-  target,
   targets = [],
   sensorsOnline,
   onRequestPower,
@@ -46,7 +45,6 @@ export default function HUD({
   speed: number;
   alt: number;
   heading: number;
-  target: TargetTrack | null;
   targets?: TargetTrack[];
   sensorsOnline: boolean;
   onRequestPower: () => void;
@@ -144,21 +142,13 @@ export default function HUD({
 
           {sensorsOnline &&
             targets.map((t, i) => (
-              <div key={i} className="absolute" style={{ left: `calc(${t.x}% - 6px)`, top: `calc(${t.y}% - 6px)` }}>
-                <div className="w-3 h-3 border border-emerald-300" />
+              <div key={i} className="absolute" style={{ left: `calc(${t.x}% - 10px)`, top: `calc(${t.y}% - 10px)` }}>
+                <div className="w-5 h-5 border-2 border-emerald-400 animate-pulse" />
+                <div className="text-[10px] mt-1 text-emerald-300">
+                  {Math.round(t.distance)} m · {Math.round(t.bearing)}° · {Math.round(relBearing(t.bearing, heading))}° REL · LOCK {Math.round(lock)}%
+                </div>
               </div>
             ))}
-
-          {/* HUD Target Lock (from Radar) */}
-          {target && sensorsOnline && (
-            <div className="absolute" style={{ left: `calc(${target.x}% - 10px)`, top: `calc(${target.y}% - 10px)` }}>
-              <div className="w-5 h-5 border-2 border-emerald-400 animate-pulse" />
-              <div className="text-[10px] mt-1 text-emerald-300">
-                {Math.round(target.distance)} m · {Math.round(target.bearing)}° · {Math.round(relBearing(target.bearing, heading))}° REL · LOCK{" "}
-                {Math.round(lock)}%
-              </div>
-            </div>
-          )}
         </>
       )}
     </div>
